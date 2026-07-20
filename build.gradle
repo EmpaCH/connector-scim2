@@ -108,7 +108,7 @@ def thinClassifierName = 'thin'
 task fatJar(type: Jar) {
 
     archiveClassifier = fatClassifierName
-    archiveName("${project.name}-${project.version}-${fatClassifierName}.jar")
+    archiveFileName = "${project.name}-${project.version}-${fatClassifierName}.jar"
     from 'custom', 'build/classes/java/main', 'src/main/resources'
 
     manifest {
@@ -121,7 +121,7 @@ task fatJar(type: Jar) {
 task thinJar(type: Jar) {
 
     archiveClassifier = thinClassifierName
-    archiveName("${project.name}-${project.version}-${thinClassifierName}.jar")
+    archiveFileName = "${project.name}-${project.version}-${thinClassifierName}.jar"
     from 'build/classes/java/main'
 
 }

@@ -71,10 +71,12 @@ public class Scim2Driver extends BaseRestDriver<Scim2Configuration> {
       List<String> resourceNames = response.getResources().stream()
           .map(Resource::getName)
           .collect(Collectors.toList());
-      if (!resourceNames.contains("User")) {
+      boolean usersEnabled = getConfiguration().getEnableUsersResource() == null || getConfiguration().getEnableUsersResource();
+      boolean groupsEnabled = getConfiguration().getEnableGroupsResource() == null || getConfiguration().getEnableGroupsResource();
+      if (usersEnabled && !resourceNames.contains("User")) {
           throw new ConnectorException("ResourceTypes does not contain User resource.");
       }
-      if (!resourceNames.contains("Group")) {
+      if (groupsEnabled && !resourceNames.contains("Group")) {
           throw new ConnectorException("ResourceTypes does not contain Group resource.");
       }
     } catch (Exception e) {

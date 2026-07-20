@@ -107,6 +107,12 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
         Set<? extends Scim2User> allUsers = null;
         Scim2Configuration config = driver.getConfiguration();
 
+        boolean usersEnabled = config.getEnableUsersResource() == null || config.getEnableUsersResource();
+        if (!usersEnabled) {
+            paginator.setNoMoreResults(true);
+            return new HashSet<>();
+        }
+
         if (config.getEnableSlackSchema())
         {
             allUsers = new Scim2SlackUsersInvocator().getAll(driver, filter, paginator, forceNumber);

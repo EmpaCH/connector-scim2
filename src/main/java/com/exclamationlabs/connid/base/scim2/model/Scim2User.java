@@ -4,9 +4,28 @@ import com.exclamationlabs.connid.base.connector.model.IdentityModel;
 import java.util.List;
 import java.util.Map;
 
+import com.google.gson.JsonDeserializationContext;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParseException;
+import com.google.gson.Gson;
+import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 
 public class Scim2User implements IdentityModel {
+
+  // Some servers (e.g. sGuard) return the enterprise extension as [] instead of {}
+  // when there are no enterprise attributes. Return null so parsing can continue.
+  static class EnterpriseUserAdapter implements JsonDeserializer<Scim2EnterpriseUser> {
+    private static final Gson GSON = new Gson();
+    @Override
+    public Scim2EnterpriseUser deserialize(JsonElement json, java.lang.reflect.Type type,
+                                           JsonDeserializationContext ctx) throws JsonParseException {
+      if (json.isJsonArray()) return null;
+      return GSON.fromJson(json, Scim2EnterpriseUser.class);
+    }
+  }
+
   private Boolean active;
   @SerializedName("addresses")
   private List<Scim2Address> addresses;
@@ -17,6 +36,7 @@ public class Scim2User implements IdentityModel {
   private transient List<Map<String, String>> emailsAdded;
   private transient List<Map<String, String>> emailsRemoved;
   @SerializedName("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User")
+  @JsonAdapter(Scim2User.EnterpriseUserAdapter.class)
   private Scim2EnterpriseUser enterpriseInfo;
   private List<Scim2ComplexType> entitlements;
   private transient List<Map<String, String>> entitlementsAdded;

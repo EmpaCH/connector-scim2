@@ -42,6 +42,18 @@ custom:
         order: 3050
         display: 'Enable Dynamic Schema'
         help: 'Use the Resource Type and/or the Schema defined '
+      enableUsersResource:
+        type: boolean
+        default: 'true'
+        order: 3055
+        display: 'Enable Users Resource'
+        help: 'Set to false if the SCIM2 server does not expose a /Users endpoint (users-only or groups-only servers)'
+      enableGroupsResource:
+        type: boolean
+        default: 'true'
+        order: 3056
+        display: 'Enable Groups Resource'
+        help: 'Set to false if the SCIM2 server does not expose a /Groups endpoint (users-only or groups-only servers)'
       usersEndpointUrl:
         type: string
         default: '/Users'

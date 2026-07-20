@@ -63,8 +63,13 @@ public class Scim2GroupsInvocator implements DriverInvocator<Scim2Driver, Scim2G
   @Override
   public Set<Scim2Group> getAll(Scim2Driver driver, ResultsFilter filter, ResultsPaginator paginator, Integer resultCap) throws ConnectorException
   {
-    List<Scim2Group> groupList = new ArrayList<>();
     Scim2Configuration config = driver.getConfiguration();
+    boolean groupsEnabled = config.getEnableGroupsResource() == null || config.getEnableGroupsResource();
+    if (!groupsEnabled) {
+      paginator.setNoMoreResults(true);
+      return new HashSet<>();
+    }
+    List<Scim2Group> groupList = new ArrayList<>();
     String filterParameter = Scim2UsersInvocator.getFilterParameter(filter);
     String pagingParameter = Scim2UsersInvocator.getPagingParameter(paginator);
     String query = "";
