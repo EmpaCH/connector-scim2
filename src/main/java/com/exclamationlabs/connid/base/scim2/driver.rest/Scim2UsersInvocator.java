@@ -39,7 +39,7 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
         }
         if ( add != null && !add.isEmpty() ) {
             Scim2OperationMulti addOperation = new Scim2OperationMulti();
-            addOperation.setOperation("add");
+            addOperation.setOperation("replace");
             addOperation.setPath(name);
             addOperation.setValue(new ArrayList<>(add));
             operations.add(addOperation);
