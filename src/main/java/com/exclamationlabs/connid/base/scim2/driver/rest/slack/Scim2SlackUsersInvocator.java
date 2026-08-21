@@ -30,6 +30,7 @@ public class Scim2SlackUsersInvocator implements DriverInvocator<Scim2Driver, Sc
     RestRequest request =
         new RestRequest.Builder<>(Scim2SlackUser.class)
             .withPost()
+            .withContentTypeHeader("application/scim+json")
             .withRequestUri(driver.getConfiguration().getUsersEndpointUrl())
             .withRequestBody(scim2SlackUser)
             .build();
@@ -55,6 +56,7 @@ public class Scim2SlackUsersInvocator implements DriverInvocator<Scim2Driver, Sc
     {
       RestRequest req = new RestRequest.Builder<>(Scim2SlackUser.class)
               .withPut()
+              .withContentTypeHeader("application/scim+json")
               .withRequestUri(driver.getConfiguration().getUsersEndpointUrl() + "/" + userId)
               .withRequestBody(model)
               .build();
@@ -210,6 +212,7 @@ public class Scim2SlackUsersInvocator implements DriverInvocator<Scim2Driver, Sc
       RestRequest request =
               new RestRequest.Builder<>(Scim2User.class)
                       .withPatch()
+                      .withContentTypeHeader("application/scim+json")
                       .withRequestUri(url)
                       .withRequestBody(patchOp)
                       .build();

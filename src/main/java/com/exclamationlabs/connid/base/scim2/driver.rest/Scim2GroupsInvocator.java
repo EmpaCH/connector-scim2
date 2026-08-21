@@ -32,6 +32,7 @@ public class Scim2GroupsInvocator implements DriverInvocator<Scim2Driver, Scim2G
       RestRequest<Scim2Group> request =
               new RestRequest.Builder<>(Scim2Group.class)
                       .withPost()
+                      .withContentTypeHeader("application/scim+json")
                       .withRequestUri(driver.getConfiguration().getGroupsEndpointUrl())
                       .withRequestBody(model)
                       .build();
@@ -203,6 +204,7 @@ public class Scim2GroupsInvocator implements DriverInvocator<Scim2Driver, Scim2G
         model.setId(groupId);
         RestRequest<Scim2Group> req = new RestRequest.Builder<>(Scim2Group.class)
                 .withPut()
+                .withContentTypeHeader("application/scim+json")
                 .withRequestUri(config.getGroupsEndpointUrl() + "/" + groupId)
                 .withRequestBody(model)
                 .build();
@@ -219,6 +221,7 @@ public class Scim2GroupsInvocator implements DriverInvocator<Scim2Driver, Scim2G
           patchOp.getOperations().add(op);
           req = new RestRequest.Builder<>(Scim2Group.class)
                   .withPatch()
+                  .withContentTypeHeader("application/scim+json")
                   .withRequestUri(config.getGroupsEndpointUrl() + "/" + groupId)
                   .withRequestBody(patchOp)
                   .build();
@@ -269,6 +272,7 @@ public class Scim2GroupsInvocator implements DriverInvocator<Scim2Driver, Scim2G
       RestRequest<Scim2Group> request =
               new RestRequest.Builder<>(Scim2Group.class)
                       .withPatch()
+                      .withContentTypeHeader("application/scim+json")
                       .withRequestUri(url)
                       .withRequestBody(patchOp)
                       .build();

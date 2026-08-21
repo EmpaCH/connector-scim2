@@ -60,6 +60,7 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
             RestRequest<Scim2User> request =
                     new RestRequest.Builder<>(Scim2User.class)
                             .withPost()
+                            .withContentTypeHeader("application/scim+json")
                             .withRequestUri(driver.getConfiguration().getUsersEndpointUrl())
                             .withRequestBody(user)
                             .build();
@@ -358,6 +359,7 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
 
             RestRequest<Scim2User> req = new RestRequest.Builder<>(Scim2User.class)
                     .withPut()
+                    .withContentTypeHeader("application/scim+json")
                     .withRequestUri(config.getUsersEndpointUrl() + "/" + userId)
                     .withRequestBody(user)
                     .build();
@@ -392,6 +394,7 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
             RestRequest<Scim2User> request =
                     new RestRequest.Builder<>(Scim2User.class)
                             .withPatch()
+                            .withContentTypeHeader("application/scim+json")
                             .withRequestUri(url)
                             .withRequestBody(patchOp)
                             .build();
