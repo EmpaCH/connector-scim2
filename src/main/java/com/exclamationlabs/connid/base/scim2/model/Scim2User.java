@@ -11,6 +11,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.Gson;
 import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
+import java.util.LinkedHashMap;
 
 public class Scim2User implements IdentityModel {
 
@@ -73,6 +74,10 @@ public class Scim2User implements IdentityModel {
   private List<Scim2ComplexType> x509Certificates;
   private transient List<Map<String, String>> x509CertificatesAdded;
   private transient List<Map<String, String>> x509CertificatesRemoved;
+
+  /** Arbitrary extension schema attributes captured by {@link com.exclamationlabs.connid.base.scim2.adapter.dynamic.Scim2UserExtensionAdapterFactory}.
+   *  Key: schema URN; Value: map of flattened attribute paths to values. */
+  private transient Map<String, Map<String, Object>> extensions = new LinkedHashMap<>();
 
   public Boolean getActive()
   {
@@ -522,5 +527,13 @@ public class Scim2User implements IdentityModel {
   public void setX509CertificatesRemoved(List<Map<String, String>> x509CertificatesRemoved)
   {
     this.x509CertificatesRemoved = x509CertificatesRemoved;
+  }
+
+  public Map<String, Map<String, Object>> getExtensions() {
+    return extensions;
+  }
+
+  public void setExtensions(Map<String, Map<String, Object>> extensions) {
+    this.extensions = extensions;
   }
 }

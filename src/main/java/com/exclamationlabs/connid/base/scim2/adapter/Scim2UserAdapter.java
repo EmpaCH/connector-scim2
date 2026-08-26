@@ -5,10 +5,14 @@ import com.exclamationlabs.connid.base.connector.adapter.BaseAdapter;
 import com.exclamationlabs.connid.base.connector.attribute.ConnectorAttribute;
 import com.exclamationlabs.connid.base.connector.logging.Logger;
 import com.exclamationlabs.connid.base.connector.util.GuardedStringUtil;
+import com.exclamationlabs.connid.base.scim2.adapter.dynamic.Scim2DynamicUserAdapter;
 import com.exclamationlabs.connid.base.scim2.adapter.slack.Scim2SlackUserAdapter;
 import com.exclamationlabs.connid.base.scim2.configuration.Scim2Configuration;
+import com.exclamationlabs.connid.base.scim2.driver.rest.Scim2Driver;
 import com.exclamationlabs.connid.base.scim2.model.*;
+import com.exclamationlabs.connid.base.scim2.model.Scim2Schema;
 import java.util.*;
+import java.util.Collections;
 
 import com.google.gson.Gson;
 import org.identityconnectors.common.logging.Log;
@@ -441,6 +445,56 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     return user;
   }
 
+  /**
+   * Reads arbitrary extension schema attributes from {@link Scim2User#getExtensions()} and
+   * converts them into ConnId attributes named {@code <schemaURN>::<fieldPath>}.
+   */
+  protected Set<Attribute> populateExtensionAttributes(Scim2User user) {
+    Set<Attribute> attrs = new HashSet<>();
+    Map<String, Map<String, Object>> extensions = user.getExtensions();
+    if (extensions == null || extensions.isEmpty()) return attrs;
+    for (Map.Entry<String, Map<String, Object>> ext : extensions.entrySet()) {
+      if (ext.getValue() == null) continue;
+      for (Map.Entry<String, Object> field : ext.getValue().entrySet()) {
+        if (field.getValue() == null) continue;
+        String attrName = Scim2DynamicUserAdapter.extensionAttrName(ext.getKey(), field.getKey());
+        attrs.add(AttributeBuilder.build(attrName, field.getValue().toString()));
+      }
+    }
+    return attrs;
+  }
+
+  /**
+   * Reads ConnId attributes whose names follow the SCIM2 extension notation {@code urn:...:User:fieldName}
+   * and populates {@link Scim2User#setExtensions(Map)}.
+   */
+  protected Scim2User populateExtensionUser(Scim2User user, Set<Attribute> attributes) {
+    Map<String, Map<String, Object>> extensions = new java.util.LinkedHashMap<>();
+    if (attributes != null) {
+      for (Attribute attr : attributes) {
+        String schemaUrn = Scim2DynamicUserAdapter.extensionSchemaUrn(attr.getName());
+        if (schemaUrn == null) continue;
+        String fieldPath = Scim2DynamicUserAdapter.extensionFieldPath(attr.getName());
+        if (fieldPath == null || attr.getValue() == null || attr.getValue().isEmpty()) continue;
+        extensions.computeIfAbsent(schemaUrn, k -> new java.util.LinkedHashMap<>())
+            .put(fieldPath, attr.getValue().get(0));
+      }
+    }
+    if (!extensions.isEmpty()) {
+      user.setExtensions(extensions);
+      // Ensure extension schema URNs are listed in the schemas array
+      List<String> schemas = user.getSchemas();
+      if (schemas == null) {
+        schemas = new ArrayList<>();
+        user.setSchemas(schemas);
+      }
+      for (String urn : extensions.keySet()) {
+        if (!schemas.contains(urn)) schemas.add(urn);
+      }
+    }
+    return user;
+  }
+
   protected Set<Attribute> populateCoreAttributes(Scim2User user) {
     Set<Attribute> attributes = new HashSet<>();
     attributes.add(AttributeBuilder.build(active.name(), user.getActive()));
@@ -725,6 +779,51 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
 
     return user;
   }
+  /**
+   * Fetches the SCIM2 {@code /Schemas} endpoint and builds the full set of ConnId attributes
+   * for the dynamic schema mode, including any extension schemas beyond the core user schema.
+   * Falls back to core+enterprise static attributes if the fetch fails or returns nothing.
+   */
+  private Set<ConnectorAttribute> buildDynamicConnectorAttributes() {
+    Scim2Driver driver = (Scim2Driver) getDriver();
+    List<Scim2Schema> schemas = new ArrayList<>();
+    try {
+      schemas = new ArrayList<>(driver.fetchSchemas());
+    } catch (Exception e) {
+      Logger.warn(this, "Dynamic schema fetch failed, using static schema: " + e.getMessage());
+    }
+    if (schemas.isEmpty()) {
+      Set<ConnectorAttribute> fallback = getCoreConnectorAttributes();
+      fallback.addAll(getEnterpriseConnectorAttributes());
+      return fallback;
+    }
+    // For any URN-named attribute that references a schema not already in the list,
+    // attempt to fetch it individually via /Schemas/{urn}.
+    Set<String> knownUrns = schemas.stream()
+        .map(Scim2Schema::getId)
+        .filter(Objects::nonNull)
+        .collect(java.util.stream.Collectors.toSet());
+    List<Scim2Schema> toAdd = new ArrayList<>();
+    for (Scim2Schema schema : schemas) {
+      if (schema.getAttributes() == null) continue;
+      for (Scim2Schema.Attribute attr : schema.getAttributes()) {
+        if (attr.name != null && attr.name.startsWith("urn:") && !knownUrns.contains(attr.name)) {
+          driver.fetchSchema(attr.name).ifPresent(fetched -> {
+            toAdd.add(fetched);
+            knownUrns.add(fetched.getId());
+          });
+        }
+      }
+    }
+    schemas.addAll(toAdd);
+    Scim2DynamicUserAdapter dynamicAdapter = new Scim2DynamicUserAdapter();
+    dynamicAdapter.setConfiguration(getConfiguration());
+    dynamicAdapter.setDriver(getDriver());
+    com.google.gson.Gson gson = new com.google.gson.Gson();
+    dynamicAdapter.setConfig(gson.toJson(schemas));
+    return dynamicAdapter.getConnectorAttributes();
+  }
+
   @Override
   public Set<ConnectorAttribute> getConnectorAttributes() {
     // Enterprise user is a super set of User
@@ -740,6 +839,8 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
       adapter.setConfiguration(getConfiguration());
       adapter.setDriver(getDriver());
       result = adapter.getConnectorAttributes();
+    } else if (isDynamic) {
+      result = buildDynamicConnectorAttributes();
     } else {
       // call Standard Attributes method
       result = getCoreConnectorAttributes();
@@ -763,6 +864,9 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
       if ( config.getEnableEnterpriseUser() ) {
         attributes.addAll(populateEnterpriseAttributes(user));
       }
+      if ( config.getEnableDynamicSchema() ) {
+        attributes.addAll(populateExtensionAttributes(user));
+      }
     }
     else if (config.getEnableAWSSchema() )
     {
@@ -772,6 +876,7 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     else if ( config.getEnableDynamicSchema() )
     {
       attributes = populateCoreAttributes(user);
+      attributes.addAll(populateExtensionAttributes(user));
     }
     return attributes;
   }
@@ -802,6 +907,9 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
                 addedMultiValueAttributes,
                 removedMultiValueAttributes,
                 isCreate);
+      }
+      if ( config.getEnableDynamicSchema() ) {
+        populateExtensionUser(user, attributes);
       }
     }
     else if (config.getEnableAWSSchema())
@@ -834,6 +942,7 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
               addedMultiValueAttributes,
               removedMultiValueAttributes,
               isCreate );
+      populateExtensionUser(user, attributes);
     }
     return user;
   }

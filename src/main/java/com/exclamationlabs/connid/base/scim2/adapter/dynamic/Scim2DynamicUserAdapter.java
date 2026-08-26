@@ -22,6 +22,102 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
     }
 
     String config;
+
+    /**
+     * Builds the ConnId attribute name for an extension schema attribute following the SCIM2
+     * extended-attribute filter notation (RFC 7644 §3.4.2.2):
+     * {@code <schemaURN>:<attributePath>}
+     *
+     * <p>Sub-attributes use dots: {@code <schemaURN>:<complexAttr>.<subAttr>}.
+     * Parsing splits on the LAST colon, which is safe because SCIM attribute names never
+     * contain colons.
+     */
+    public static String extensionAttrName(String schemaUrn, String fieldPath) {
+        return schemaUrn + ":" + fieldPath;
+    }
+
+    /**
+     * Extracts the schema URN from an extension attribute name (everything before the last colon).
+     * Returns null if the name is not an extension attribute (i.e. does not start with "urn:").
+     */
+    public static String extensionSchemaUrn(String attrName) {
+        if (!attrName.startsWith("urn:")) return null;
+        int idx = attrName.lastIndexOf(':');
+        // must have something after the last colon and a URN with at least one segment before it
+        return (idx > 4 && idx < attrName.length() - 1) ? attrName.substring(0, idx) : null;
+    }
+
+    /**
+     * Extracts the field path from an extension attribute name (everything after the last colon).
+     * Returns null if the name is not an extension attribute.
+     */
+    public static String extensionFieldPath(String attrName) {
+        if (!attrName.startsWith("urn:")) return null;
+        int idx = attrName.lastIndexOf(':');
+        return (idx > 4 && idx < attrName.length() - 1) ? attrName.substring(idx + 1) : null;
+    }
+
+    private void addExtensionAttributesToInfoSet(
+            Set<ConnectorAttribute> attributeInfos,
+            List<Scim2Schema.Attribute> schemaAttributes,
+            String schemaUrn,
+            List<Scim2Schema> allSchemas) {
+        for (Scim2Schema.Attribute schemaAttr : schemaAttributes) {
+            if (schemaAttr.name == null) continue;
+            // Some servers (e.g. sGuard/Entra) embed a nested extension URN as an attribute
+            // name — either inline with subAttributes, or as a leaf reference to another schema.
+            if (schemaAttr.name.startsWith("urn:")) {
+                if (schemaAttr.subAttributes != null && !schemaAttr.subAttributes.isEmpty()) {
+                    // Inline nested extension with its own sub-attributes
+                    addExtensionAttributesToInfoSet(attributeInfos, schemaAttr.subAttributes,
+                            schemaAttr.name, allSchemas);
+                } else {
+                    // Leaf reference: look up the schema by URN in the full list
+                    allSchemas.stream()
+                            .filter(s -> schemaAttr.name.equals(s.getId()))
+                            .filter(s -> s.getAttributes() != null && !s.getAttributes().isEmpty())
+                            .findFirst()
+                            .ifPresent(s -> addExtensionAttributesToInfoSet(
+                                    attributeInfos, s.getAttributes(), s.getId(), allSchemas));
+                }
+                continue;
+            }
+            if (schemaAttr.subAttributes != null && !schemaAttr.subAttributes.isEmpty()) {
+                for (Scim2Schema.Attribute sub : schemaAttr.subAttributes) {
+                    String fieldPath = schemaAttr.name + "." + sub.name;
+                    ConnectorAttribute ca = buildExtensionConnectorAttribute(
+                            extensionAttrName(schemaUrn, fieldPath),
+                            sub.type,
+                            buildFlags(sub));
+                    if (ca != null) attributeInfos.add(ca);
+                }
+            } else {
+                ConnectorAttribute ca = buildExtensionConnectorAttribute(
+                        extensionAttrName(schemaUrn, schemaAttr.name),
+                        schemaAttr.type,
+                        buildFlags(schemaAttr));
+                if (ca != null) attributeInfos.add(ca);
+            }
+        }
+    }
+
+    private ConnectorAttribute buildExtensionConnectorAttribute(
+            String fullName, String type, Set<AttributeInfo.Flags> flags) {
+        if (type == null) return null;
+        switch (type.toLowerCase()) {
+            case "boolean":
+                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.BOOLEAN, flags);
+            case "integer":
+                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.INTEGER, flags);
+            case "decimal":
+                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.BIG_DECIMAL, flags);
+            case "datetime":
+                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.ZONED_DATE_TIME, flags);
+            default:
+                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.STRING, flags);
+        }
+    }
+
     private void addAttributesToInfoSet(
             Set<ConnectorAttribute> attributeInfos,
             List<Scim2Schema.Attribute> schemaAttributes,
@@ -218,13 +314,20 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
             throw new RuntimeException(e);
         }
 
+        final List<Scim2Schema> allSchemas = schemaPojo;
         Set<ConnectorAttribute> result = new HashSet<>();
-        schemaPojo.forEach(
+        allSchemas.forEach(
                 obj -> {
                     if (obj.getId().equalsIgnoreCase("urn:ietf:params:scim:schemas:core:2.0:User")) {
-                        // scim2SlackUserAdapter.setStandardUserSchema(obj);
                         List<Scim2Schema.Attribute> userAttributes = obj.getAttributes();
                         addAttributesToInfoSet(attributeInfos, userAttributes, "");
+                    } else if (obj.getId() != null && obj.getId().startsWith("urn:")) {
+                        // Extension schema: prefix each attribute with <schemaId>:
+                        List<Scim2Schema.Attribute> extAttributes = obj.getAttributes();
+                        if (extAttributes != null) {
+                            addExtensionAttributesToInfoSet(attributeInfos, extAttributes,
+                                    obj.getId(), allSchemas);
+                        }
                     }
                 });
         attributeInfos.removeIf(Objects::isNull);
