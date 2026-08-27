@@ -465,24 +465,26 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
   }
 
   /**
-   * Reads ConnId attributes whose names follow the SCIM2 extension notation {@code urn:...:User:fieldName}
-   * and populates {@link Scim2User#setExtensions(Map)}.
+   * Reads ConnId attributes whose names use the encoded extension notation
+   * {@code urn_..._User$fieldName} and populates {@link Scim2User#setExtensions(Map)}
+   * using the original SCIM2 URN (with colons) as the map key.
    */
   protected Scim2User populateExtensionUser(Scim2User user, Set<Attribute> attributes) {
     Map<String, Map<String, Object>> extensions = new java.util.LinkedHashMap<>();
     if (attributes != null) {
       for (Attribute attr : attributes) {
-        String schemaUrn = Scim2DynamicUserAdapter.extensionSchemaUrn(attr.getName());
-        if (schemaUrn == null) continue;
+        String encodedUrn = Scim2DynamicUserAdapter.extensionSchemaUrn(attr.getName());
+        if (encodedUrn == null) continue;
         String fieldPath = Scim2DynamicUserAdapter.extensionFieldPath(attr.getName());
         if (fieldPath == null || attr.getValue() == null || attr.getValue().isEmpty()) continue;
-        extensions.computeIfAbsent(schemaUrn, k -> new java.util.LinkedHashMap<>())
+        // Decode the encoded URN back to the original colon-separated SCIM2 URN for the wire
+        String originalUrn = Scim2DynamicUserAdapter.decodeExtensionUrn(encodedUrn);
+        extensions.computeIfAbsent(originalUrn, k -> new java.util.LinkedHashMap<>())
             .put(fieldPath, attr.getValue().get(0));
       }
     }
     if (!extensions.isEmpty()) {
       user.setExtensions(extensions);
-      // Ensure extension schema URNs are listed in the schemas array
       List<String> schemas = user.getSchemas();
       if (schemas == null) {
         schemas = new ArrayList<>();
@@ -493,6 +495,63 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
       }
     }
     return user;
+  }
+
+  /**
+   * Builds the ConnId attribute set for dynamic schema mode.
+   * Complex attributes (e.g. name) are serialized as opaque JSON strings matching the flat
+   * attribute names the server declared in its /Schemas response.
+   */
+  protected Set<Attribute> populateDynamicAttributes(Scim2User user) {
+    Set<Attribute> attrs = new HashSet<>();
+    attrs.add(AttributeBuilder.build(Uid.NAME, user.getIdentityIdValue()));
+    attrs.add(AttributeBuilder.build(Name.NAME, user.getUserName()));
+    attrs.add(AttributeBuilder.build(active.name(), user.getActive()));
+    attrs.add(AttributeBuilder.build(OperationalAttributes.ENABLE_NAME, user.getActive()));
+    attrs.add(AttributeBuilder.build(externalId.name(), user.getExternalId()));
+    attrs.add(AttributeBuilder.build(id.name(), user.getIdentityIdValue()));
+    // Serialize complex name as an opaque JSON blob — matches the flat "name" the dynamic schema declares
+    if (user.getName() != null) {
+      attrs.add(AttributeBuilder.build("name", new com.google.gson.Gson().toJson(user.getName())));
+    }
+    Set<String> emailSet = putComplexTypes(user.getEmails());
+    if (emailSet != null) attrs.add(AttributeBuilder.build(emails.name(), emailSet));
+    Set<String> phoneSet = putComplexTypes(user.getPhoneNumbers());
+    if (phoneSet != null) attrs.add(AttributeBuilder.build(phoneNumbers.name(), phoneSet));
+    attrs.addAll(populateExtensionAttributes(user));
+    return attrs;
+  }
+
+  /**
+   * Populates a Scim2User from ConnId attributes in dynamic schema mode.
+   * Reads the flat "name" JSON blob (if present) and any extension URN attributes.
+   */
+  protected void populateDynamicUser(
+      Scim2User user,
+      Set<Attribute> attributes,
+      Set<Attribute> addedMultiValueAttributes,
+      Set<Attribute> removedMultiValueAttributes,
+      boolean isCreate) {
+    user.setId(AdapterValueTypeConverter.getIdentityIdAttributeValue(attributes));
+    user.setUserName(AdapterValueTypeConverter.getIdentityNameAttributeValue(attributes));
+    user.setActive(AdapterValueTypeConverter.getSingleAttributeValue(Boolean.class, attributes, active));
+    user.setExternalId(AdapterValueTypeConverter.getSingleAttributeValue(String.class, attributes, externalId));
+    // Parse the opaque "name" JSON blob back into a Scim2Name object
+    Attribute nameAttr = AttributeUtil.find("name", attributes);
+    if (nameAttr != null && nameAttr.getValue() != null && !nameAttr.getValue().isEmpty()) {
+      String nameJson = (String) nameAttr.getValue().get(0);
+      if (nameJson != null) {
+        user.setName(new com.google.gson.Gson().fromJson(nameJson, Scim2Name.class));
+      }
+    }
+    Set<String> emailList = readAssignments(attributes, emails);
+    user.setEmails(getComplexTypes(emailList));
+    Set<String> phoneList = readAssignments(attributes, phoneNumbers);
+    user.setPhoneNumbers(getComplexTypes(phoneList));
+    populateExtensionUser(user, attributes);
+    List<String> schemas = new ArrayList<>();
+    schemas.add(SCIM2_CORE_USER_SCHEMA);
+    user.setSchemas(schemas);
   }
 
   protected Set<Attribute> populateCoreAttributes(Scim2User user) {
@@ -875,8 +934,7 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     }
     else if ( config.getEnableDynamicSchema() )
     {
-      attributes = populateCoreAttributes(user);
-      attributes.addAll(populateExtensionAttributes(user));
+      attributes = populateDynamicAttributes(user);
     }
     return attributes;
   }
@@ -935,14 +993,8 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
               removedMultiValueAttributes,
               isCreate);
     } else if (config.getEnableDynamicSchema()) {
-      // Handle Dynamic Schema
       user = new Scim2User();
-      populateCoreUser(user,
-              attributes,
-              addedMultiValueAttributes,
-              removedMultiValueAttributes,
-              isCreate );
-      populateExtensionUser(user, attributes);
+      populateDynamicUser(user, attributes, addedMultiValueAttributes, removedMultiValueAttributes, isCreate);
     }
     return user;
   }

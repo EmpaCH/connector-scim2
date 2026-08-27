@@ -24,37 +24,46 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
     String config;
 
     /**
-     * Builds the ConnId attribute name for an extension schema attribute following the SCIM2
-     * extended-attribute filter notation (RFC 7644 §3.4.2.2):
-     * {@code <schemaURN>:<attributePath>}
+     * Builds the ConnId attribute name for an extension schema attribute.
      *
-     * <p>Sub-attributes use dots: {@code <schemaURN>:<complexAttr>.<subAttr>}.
-     * Parsing splits on the LAST colon, which is safe because SCIM attribute names never
-     * contain colons.
+     * <p>Colons in the URN are replaced with underscores so the name is safe for XML-based
+     * frameworks (e.g. MidPoint) that treat colons as namespace separators. The URN and the
+     * field path are joined with {@code $} so the boundary is unambiguous.
+     *
+     * <p>Example: {@code urn:ietf:...:User} + {@code officeLocation}
+     *          → {@code urn_ietf_..._User$officeLocation}
      */
     public static String extensionAttrName(String schemaUrn, String fieldPath) {
-        return schemaUrn + ":" + fieldPath;
+        return schemaUrn.replace(":", "_") + "$" + fieldPath;
     }
 
     /**
-     * Extracts the schema URN from an extension attribute name (everything before the last colon).
-     * Returns null if the name is not an extension attribute (i.e. does not start with "urn:").
+     * Decodes an extension ConnId attribute name back to the original SCIM2 schema URN.
+     * Returns null if {@code attrName} is not an encoded extension attribute.
      */
     public static String extensionSchemaUrn(String attrName) {
-        if (!attrName.startsWith("urn:")) return null;
-        int idx = attrName.lastIndexOf(':');
-        // must have something after the last colon and a URN with at least one segment before it
+        if (!attrName.startsWith("urn_")) return null;
+        int idx = attrName.indexOf('$');
         return (idx > 4 && idx < attrName.length() - 1) ? attrName.substring(0, idx) : null;
     }
 
     /**
-     * Extracts the field path from an extension attribute name (everything after the last colon).
-     * Returns null if the name is not an extension attribute.
+     * Returns the field path portion of an encoded extension attribute name (after the {@code $}).
+     * Returns null if {@code attrName} is not an encoded extension attribute.
      */
     public static String extensionFieldPath(String attrName) {
-        if (!attrName.startsWith("urn:")) return null;
-        int idx = attrName.lastIndexOf(':');
+        if (!attrName.startsWith("urn_")) return null;
+        int idx = attrName.indexOf('$');
         return (idx > 4 && idx < attrName.length() - 1) ? attrName.substring(idx + 1) : null;
+    }
+
+    /**
+     * Converts an encoded extension schema URN (underscores) back to the original SCIM2 URN
+     * (colons). SCIM2 URNs do not contain underscores, so the mapping is unambiguous.
+     */
+    public static String decodeExtensionUrn(String encodedUrn) {
+        if (encodedUrn == null) return null;
+        return encodedUrn.replace("_", ":");
     }
 
     private void addExtensionAttributesToInfoSet(
@@ -87,34 +96,34 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
                     String fieldPath = schemaAttr.name + "." + sub.name;
                     ConnectorAttribute ca = buildExtensionConnectorAttribute(
                             extensionAttrName(schemaUrn, fieldPath),
-                            sub.type,
-                            buildFlags(sub));
+                            schemaUrn + ":" + fieldPath,
+                            sub.type, buildFlags(sub));
                     if (ca != null) attributeInfos.add(ca);
                 }
             } else {
                 ConnectorAttribute ca = buildExtensionConnectorAttribute(
                         extensionAttrName(schemaUrn, schemaAttr.name),
-                        schemaAttr.type,
-                        buildFlags(schemaAttr));
+                        schemaUrn + ":" + schemaAttr.name,
+                        schemaAttr.type, buildFlags(schemaAttr));
                 if (ca != null) attributeInfos.add(ca);
             }
         }
     }
 
     private ConnectorAttribute buildExtensionConnectorAttribute(
-            String fullName, String type, Set<AttributeInfo.Flags> flags) {
+            String connIdName, String nativeName, String type, Set<AttributeInfo.Flags> flags) {
         if (type == null) return null;
         switch (type.toLowerCase()) {
             case "boolean":
-                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.BOOLEAN, flags);
+                return new ConnectorAttribute(connIdName, nativeName, ConnectorAttributeDataType.BOOLEAN, flags);
             case "integer":
-                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.INTEGER, flags);
+                return new ConnectorAttribute(connIdName, nativeName, ConnectorAttributeDataType.INTEGER, flags);
             case "decimal":
-                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.BIG_DECIMAL, flags);
+                return new ConnectorAttribute(connIdName, nativeName, ConnectorAttributeDataType.BIG_DECIMAL, flags);
             case "datetime":
-                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.ZONED_DATE_TIME, flags);
+                return new ConnectorAttribute(connIdName, nativeName, ConnectorAttributeDataType.ZONED_DATE_TIME, flags);
             default:
-                return new ConnectorAttribute(fullName, ConnectorAttributeDataType.STRING, flags);
+                return new ConnectorAttribute(connIdName, nativeName, ConnectorAttributeDataType.STRING, flags);
         }
     }
 
@@ -131,114 +140,64 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
             // builder.setMultiValued(schemaAttr.multiValued);
             // builder.setRequired(schemaAttr.required);
 
-            if (schemaAttr.type.equalsIgnoreCase("string")
-                    || schemaAttr.type.equalsIgnoreCase("complex")) {
-                // builder.setType(String.class);
-                builder1 =
-                        new ConnectorAttribute(
-                                fullPath, ConnectorAttributeDataType.valueOf("STRING"), buildFlags(schemaAttr));
-            } else if (schemaAttr.type.equalsIgnoreCase("boolean")) {
-                // builder.setType(Boolean.class);
-                builder1 =
-                        new ConnectorAttribute(
-                                fullPath, ConnectorAttributeDataType.valueOf("BOOLEAN"), buildFlags(schemaAttr));
-            } else if (schemaAttr.type.equalsIgnoreCase("decimal")) {
-                // builder.setType(Double.class);
-                builder1 =
-                        new ConnectorAttribute(
-                                fullPath,
-                                ConnectorAttributeDataType.valueOf("BIG_DECIMAL"),
-                                buildFlags(schemaAttr));
-            } else if (schemaAttr.type.equalsIgnoreCase("integer")) {
-                // builder.setType(Integer.class);
-                builder1 =
-                        new ConnectorAttribute(
-                                fullPath, ConnectorAttributeDataType.valueOf("INTEGER"), buildFlags(schemaAttr));
-            } else if (schemaAttr.type.equalsIgnoreCase("datetime")) {
-                // builder.setType(Long.class); // Typically UNIX timestamp
-                builder1 =
-                        new ConnectorAttribute(
-                                fullPath,
-                                ConnectorAttributeDataType.valueOf("ZONED_DATE_TIME"),
-                                buildFlags(schemaAttr));
+            String attrType = schemaAttr.type != null ? schemaAttr.type : "string";
+            if (attrType.equalsIgnoreCase("string") || attrType.equalsIgnoreCase("complex")) {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.STRING, buildFlags(schemaAttr));
+            } else if (attrType.equalsIgnoreCase("boolean")) {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.BOOLEAN, buildFlags(schemaAttr));
+            } else if (attrType.equalsIgnoreCase("decimal")) {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.BIG_DECIMAL, buildFlags(schemaAttr));
+            } else if (attrType.equalsIgnoreCase("integer")) {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.INTEGER, buildFlags(schemaAttr));
+            } else if (attrType.equalsIgnoreCase("datetime")) {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.ZONED_DATE_TIME, buildFlags(schemaAttr));
+            } else {
+                builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.STRING, buildFlags(schemaAttr));
             }
 
-            if (schemaAttr.subAttributes != null && !schemaAttr.subAttributes.isEmpty()) {
-                addAttributesToInfoSet(attributeInfos, schemaAttr.subAttributes, fullPath);
-            }
-
-            // attributeInfos.add(builder.build());
+            // Complex attributes are kept opaque (flat String); sub-attributes are not expanded.
             attributeInfos.add(builder1);
         }
     }
 
-    public static final Set<AttributeInfo.Flags> buildFlags(
+    public static Set<AttributeInfo.Flags> buildFlags(
             com.exclamationlabs.connid.base.scim2.model.Attribute attribute) {
-
-        Set<AttributeInfo.Flags> flagsSet = new HashSet<>();
-        boolean multiValued = attribute.getMultiValued() != null ? attribute.getMultiValued() : false;
-        boolean required = attribute.getRequired() != null ? attribute.getRequired() : false;
-        boolean caseExact = attribute.getCaseExact() != null ? attribute.getCaseExact() : false;
-        String mutability = attribute.getMutability() != null ? attribute.getMutability() : "";
-        String returned = attribute.getReturned() != null ? attribute.getReturned() : "";
-        String uniqueness = attribute.getUniqueness() != null ? attribute.getUniqueness() : "";
-        if (multiValued) flagsSet.add(AttributeInfo.Flags.valueOf("MULTIVALUED"));
-
-        if (required) flagsSet.add(AttributeInfo.Flags.valueOf("REQUIRED"));
-
-        // if(caseExact)
-        //   list.add(AttributeInfo.Subtypes.valueOf("MULTIVALUED"));
-
-        if (mutability.equalsIgnoreCase("readOnly"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_UPDATEABLE"));
-
-        if (mutability.equalsIgnoreCase("writeOnly"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_READABLE"));
-
-        if (returned.equalsIgnoreCase("never"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_RETURNED_BY_DEFAULT"));
-
-        if (uniqueness.equalsIgnoreCase("server"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_CREATABLE"));
-
-        return flagsSet;
+        return buildModelFlags(
+                attribute.getMultiValued(), attribute.getRequired(),
+                attribute.getMutability(), attribute.getReturned());
     }
 
-    /**
-     * Compose connid attributes flags from a SCIM2 sub attribute
-     * @param attribute
-     * @return Set of connid AttributeInfo Flags
-     */
-    public static final Set<AttributeInfo.Flags> buildFlags(
+    public static Set<AttributeInfo.Flags> buildFlags(
             com.exclamationlabs.connid.base.scim2.model.SubAttribute attribute) {
+        return buildModelFlags(
+                attribute.getMultiValued(), attribute.getRequired(),
+                attribute.getMutability(), attribute.getReturned());
+    }
 
-        Set<AttributeInfo.Flags> flagsSet = new HashSet<>();
-        boolean multiValued = attribute.getMultiValued() != null ? attribute.getMultiValued() : false;
-        boolean required = attribute.getRequired() != null ? attribute.getRequired() : false;
-        boolean caseExact = attribute.getCaseExact() != null ? attribute.getCaseExact() : false;
-        String mutability = attribute.getMutability() != null ? attribute.getMutability() : "";
-        String returned = attribute.getReturned() != null ? attribute.getReturned() : "";
-        String uniqueness = attribute.getUniqueness() != null ? attribute.getUniqueness() : "";
-        if (multiValued) flagsSet.add(AttributeInfo.Flags.valueOf("MULTIVALUED"));
-
-        if (required) flagsSet.add(AttributeInfo.Flags.valueOf("REQUIRED"));
-
-        // if(caseExact)
-        //   list.add(AttributeInfo.Subtypes.valueOf("MULTIVALUED"));
-
-        if (mutability.equalsIgnoreCase("readOnly"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_UPDATEABLE"));
-
-        if (mutability.equalsIgnoreCase("writeOnly"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_READABLE"));
-
-        if (returned.equalsIgnoreCase("never"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_RETURNED_BY_DEFAULT"));
-
-        if (uniqueness.equalsIgnoreCase("server"))
-            flagsSet.add(AttributeInfo.Flags.valueOf("NOT_CREATABLE"));
-
-        return flagsSet;
+    private static Set<AttributeInfo.Flags> buildModelFlags(
+            Boolean multiValued, Boolean required, String mutability, String returned) {
+        Set<AttributeInfo.Flags> flags = new HashSet<>();
+        if (Boolean.TRUE.equals(multiValued)) flags.add(AttributeInfo.Flags.MULTIVALUED);
+        if (Boolean.TRUE.equals(required))    flags.add(AttributeInfo.Flags.REQUIRED);
+        String mut = mutability != null ? mutability : "";
+        switch (mut.toLowerCase()) {
+            case "readonly":
+                flags.add(AttributeInfo.Flags.NOT_CREATABLE);
+                flags.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+                break;
+            case "immutable":
+                flags.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+                break;
+            case "writeonly":
+                flags.add(AttributeInfo.Flags.NOT_READABLE);
+                break;
+        }
+        String ret = returned != null ? returned : "";
+        switch (ret.toLowerCase()) {
+            case "never":   flags.add(AttributeInfo.Flags.NOT_READABLE); break;
+            case "request": flags.add(AttributeInfo.Flags.NOT_RETURNED_BY_DEFAULT); break;
+        }
+        return flags;
     }
 
     private Set<AttributeInfo.Flags> getFlags(
@@ -276,27 +235,37 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
             String mutability,
             String returned,
             String uniqueness) {
-        if (multiValued) {
-            flagsSet.add(AttributeInfo.Flags.MULTIVALUED);
+        if (multiValued) flagsSet.add(AttributeInfo.Flags.MULTIVALUED);
+        if (required)    flagsSet.add(AttributeInfo.Flags.REQUIRED);
+
+        switch (mutability.toLowerCase()) {
+            case "readonly":
+                // Server-managed: must not be sent on create or update (RFC 7644 §2.2)
+                flagsSet.add(AttributeInfo.Flags.NOT_CREATABLE);
+                flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+                break;
+            case "immutable":
+                // Can be set at create-time but not changed afterwards
+                flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+                break;
+            case "writeonly":
+                flagsSet.add(AttributeInfo.Flags.NOT_READABLE);
+                break;
+            // "readwrite" (default) — no extra flags
         }
-        if (required) {
-            flagsSet.add(AttributeInfo.Flags.REQUIRED);
+
+        switch (returned.toLowerCase()) {
+            case "never":
+                // Attribute is never returned by the server
+                flagsSet.add(AttributeInfo.Flags.NOT_READABLE);
+                break;
+            case "request":
+                // Returned only when explicitly requested
+                flagsSet.add(AttributeInfo.Flags.NOT_RETURNED_BY_DEFAULT);
+                break;
+            // "always" / "default" — no extra flags
         }
-        // if (caseExact) {
-        //     list.add(AttributeInfo.Subtypes.MULTIVALUED);
-        // }
-        if ("readOnly".equalsIgnoreCase(mutability)) {
-            flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
-        }
-        if ("writeOnly".equalsIgnoreCase(mutability)) {
-            flagsSet.add(AttributeInfo.Flags.NOT_READABLE);
-        }
-        if ("never".equalsIgnoreCase(returned)) {
-            flagsSet.add(AttributeInfo.Flags.NOT_RETURNED_BY_DEFAULT);
-        }
-        if ("server".equalsIgnoreCase(uniqueness)) {
-            flagsSet.add(AttributeInfo.Flags.NOT_CREATABLE);
-        }
+        // "uniqueness: server/global" is a server-enforcement hint, not a client restriction
     }
     @Override
     public Set<ConnectorAttribute> getConnectorAttributes() {

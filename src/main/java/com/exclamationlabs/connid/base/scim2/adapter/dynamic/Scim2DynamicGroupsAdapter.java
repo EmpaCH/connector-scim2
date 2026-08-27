@@ -7,8 +7,10 @@ import com.exclamationlabs.connid.base.connector.attribute.ConnectorAttributeDat
 import com.exclamationlabs.connid.base.scim2.configuration.Scim2Configuration;
 import com.exclamationlabs.connid.base.scim2.model.Scim2Group;
 import com.exclamationlabs.connid.base.scim2.model.Scim2Schema;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.util.*;
 import org.identityconnectors.framework.common.objects.Attribute;
 import org.identityconnectors.framework.common.objects.AttributeInfo;
@@ -44,20 +46,15 @@ public class Scim2DynamicGroupsAdapter extends BaseAdapter<Scim2Group, Scim2Conf
     String rawJson = getConfig();
 
     ObjectMapper objectMapper = new ObjectMapper();
-    List<Scim2Schema> schemaPojo = null;
-    Map<String, Object> userMap = new HashMap<>();
-    Set<ConnectorAttribute> attributeInfos = new HashSet<>();
     objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-/*
+    List<Scim2Schema> schemaPojo;
     try {
       schemaPojo = objectMapper.readValue(rawJson, new TypeReference<List<Scim2Schema>>() {});
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
 
- */
-
-    Set<ConnectorAttribute> result = new HashSet<>();
+    Set<ConnectorAttribute> attributeInfos = new HashSet<>();
     schemaPojo.forEach(
         obj -> {
           if (obj.getId().equalsIgnoreCase("urn:ietf:params:scim:schemas:core:2.0:Group")) {
@@ -82,43 +79,22 @@ public class Scim2DynamicGroupsAdapter extends BaseAdapter<Scim2Group, Scim2Conf
       // builder.setMultiValued(schemaAttr.multiValued);
       // builder.setRequired(schemaAttr.required);
 
-      if (schemaAttr.type.equalsIgnoreCase("string")
-          || schemaAttr.type.equalsIgnoreCase("complex")) {
-        // builder.setType(String.class);
-        builder1 =
-            new ConnectorAttribute(
-                fullPath, ConnectorAttributeDataType.valueOf("STRING"), buildFlags(schemaAttr));
-      } else if (schemaAttr.type.equalsIgnoreCase("boolean")) {
-        // builder.setType(Boolean.class);
-        builder1 =
-            new ConnectorAttribute(
-                fullPath, ConnectorAttributeDataType.valueOf("BOOLEAN"), buildFlags(schemaAttr));
-      } else if (schemaAttr.type.equalsIgnoreCase("decimal")) {
-        // builder.setType(Double.class);
-        builder1 =
-            new ConnectorAttribute(
-                fullPath,
-                ConnectorAttributeDataType.valueOf("BIG_DECIMAL"),
-                buildFlags(schemaAttr));
-      } else if (schemaAttr.type.equalsIgnoreCase("integer")) {
-        // builder.setType(Integer.class);
-        builder1 =
-            new ConnectorAttribute(
-                fullPath, ConnectorAttributeDataType.valueOf("INTEGER"), buildFlags(schemaAttr));
-      } else if (schemaAttr.type.equalsIgnoreCase("datetime")) {
-        // builder.setType(Long.class); // Typically UNIX timestamp
-        builder1 =
-            new ConnectorAttribute(
-                fullPath,
-                ConnectorAttributeDataType.valueOf("ZONED_DATE_TIME"),
-                buildFlags(schemaAttr));
+      String attrType = schemaAttr.type != null ? schemaAttr.type : "string";
+      if (attrType.equalsIgnoreCase("string") || attrType.equalsIgnoreCase("complex")) {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.STRING, buildFlags(schemaAttr));
+      } else if (attrType.equalsIgnoreCase("boolean")) {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.BOOLEAN, buildFlags(schemaAttr));
+      } else if (attrType.equalsIgnoreCase("decimal")) {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.BIG_DECIMAL, buildFlags(schemaAttr));
+      } else if (attrType.equalsIgnoreCase("integer")) {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.INTEGER, buildFlags(schemaAttr));
+      } else if (attrType.equalsIgnoreCase("datetime")) {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.ZONED_DATE_TIME, buildFlags(schemaAttr));
+      } else {
+        builder1 = new ConnectorAttribute(fullPath, ConnectorAttributeDataType.STRING, buildFlags(schemaAttr));
       }
 
-      if (schemaAttr.subAttributes != null && !schemaAttr.subAttributes.isEmpty()) {
-        addAttributesToInfoSet(attributeInfos, schemaAttr.subAttributes, fullPath);
-      }
-
-      // attributeInfos.add(builder.build());
+      // Complex attributes are kept opaque (flat String); sub-attributes are not expanded.
       attributeInfos.add(builder1);
     }
   }
@@ -160,27 +136,27 @@ public class Scim2DynamicGroupsAdapter extends BaseAdapter<Scim2Group, Scim2Conf
       String mutability,
       String returned,
       String uniqueness) {
-    if (multiValued) {
-      flagsSet.add(AttributeInfo.Flags.MULTIVALUED);
+    if (multiValued) flagsSet.add(AttributeInfo.Flags.MULTIVALUED);
+    if (required)    flagsSet.add(AttributeInfo.Flags.REQUIRED);
+
+    switch (mutability.toLowerCase()) {
+      case "readonly":
+        flagsSet.add(AttributeInfo.Flags.NOT_CREATABLE);
+        flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+        break;
+      case "immutable":
+        flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
+        break;
+      case "writeonly":
+        flagsSet.add(AttributeInfo.Flags.NOT_READABLE);
+        break;
     }
-    if (required) {
-      flagsSet.add(AttributeInfo.Flags.REQUIRED);
+
+    switch (returned.toLowerCase()) {
+      case "never":   flagsSet.add(AttributeInfo.Flags.NOT_READABLE); break;
+      case "request": flagsSet.add(AttributeInfo.Flags.NOT_RETURNED_BY_DEFAULT); break;
     }
-    // if (caseExact) {
-    //     list.add(AttributeInfo.Subtypes.MULTIVALUED);
-    // }
-    if ("readOnly".equalsIgnoreCase(mutability)) {
-      flagsSet.add(AttributeInfo.Flags.NOT_UPDATEABLE);
-    }
-    if ("writeOnly".equalsIgnoreCase(mutability)) {
-      flagsSet.add(AttributeInfo.Flags.NOT_READABLE);
-    }
-    if ("never".equalsIgnoreCase(returned)) {
-      flagsSet.add(AttributeInfo.Flags.NOT_RETURNED_BY_DEFAULT);
-    }
-    if ("server".equalsIgnoreCase(uniqueness)) {
-      flagsSet.add(AttributeInfo.Flags.NOT_CREATABLE);
-    }
+    // "uniqueness: server/global" is server-enforcement only, not a client restriction
   }
 
   @Override
