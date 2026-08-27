@@ -8,6 +8,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.identityconnectors.framework.common.objects.AttributeInfo;
+import org.identityconnectors.framework.common.objects.Name;
+import org.identityconnectors.framework.common.objects.Uid;
 
 import java.io.IOException;
 import java.util.*;
@@ -300,6 +302,24 @@ public class Scim2DynamicUserAdapter extends Scim2UserAdapter {
                     }
                 });
         attributeInfos.removeIf(Objects::isNull);
+
+        // Wire SCIM 'id' → __UID__ and 'userName' → __NAME__ exactly as the static schema does.
+        // Remove any plain registrations of these names that came from addAttributesToInfoSet,
+        // then inject the proper ConnId identity attributes.
+        attributeInfos.removeIf(a -> "id".equals(a.getName())
+                || "userName".equals(a.getName())
+                || "name".equals(a.getName()));
+        attributeInfos.add(new ConnectorAttribute(
+                Uid.NAME, "id", ConnectorAttributeDataType.STRING,
+                AttributeInfo.Flags.NOT_UPDATEABLE, AttributeInfo.Flags.REQUIRED));
+        attributeInfos.add(new ConnectorAttribute(
+                Name.NAME, "userName", ConnectorAttributeDataType.STRING,
+                AttributeInfo.Flags.REQUIRED));
+        // SCIM 'name' (complex Name object) serialized as opaque JSON; renamed to avoid
+        // clash with ConnId __NAME__ which MidPoint renders as "name" in the schema UI.
+        attributeInfos.add(new ConnectorAttribute(
+                "scim_name", "name", ConnectorAttributeDataType.STRING));
+
         return attributeInfos;
     }
 }

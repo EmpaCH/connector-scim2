@@ -509,10 +509,9 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     attrs.add(AttributeBuilder.build(active.name(), user.getActive()));
     attrs.add(AttributeBuilder.build(OperationalAttributes.ENABLE_NAME, user.getActive()));
     attrs.add(AttributeBuilder.build(externalId.name(), user.getExternalId()));
-    attrs.add(AttributeBuilder.build(id.name(), user.getIdentityIdValue()));
-    // Serialize complex name as an opaque JSON blob — matches the flat "name" the dynamic schema declares
+    // SCIM 'name' serialized as opaque JSON under 'scim_name' to avoid conflict with __NAME__
     if (user.getName() != null) {
-      attrs.add(AttributeBuilder.build("name", new com.google.gson.Gson().toJson(user.getName())));
+      attrs.add(AttributeBuilder.build("scim_name", new com.google.gson.Gson().toJson(user.getName())));
     }
     Set<String> emailSet = putComplexTypes(user.getEmails());
     if (emailSet != null) attrs.add(AttributeBuilder.build(emails.name(), emailSet));
@@ -536,8 +535,8 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     user.setUserName(AdapterValueTypeConverter.getIdentityNameAttributeValue(attributes));
     user.setActive(AdapterValueTypeConverter.getSingleAttributeValue(Boolean.class, attributes, active));
     user.setExternalId(AdapterValueTypeConverter.getSingleAttributeValue(String.class, attributes, externalId));
-    // Parse the opaque "name" JSON blob back into a Scim2Name object
-    Attribute nameAttr = AttributeUtil.find("name", attributes);
+    // Parse the opaque "scim_name" JSON blob back into a Scim2Name object
+    Attribute nameAttr = AttributeUtil.find("scim_name", attributes);
     if (nameAttr != null && nameAttr.getValue() != null && !nameAttr.getValue().isEmpty()) {
       String nameJson = (String) nameAttr.getValue().get(0);
       if (nameJson != null) {
@@ -548,10 +547,11 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     user.setEmails(getComplexTypes(emailList));
     Set<String> phoneList = readAssignments(attributes, phoneNumbers);
     user.setPhoneNumbers(getComplexTypes(phoneList));
-    populateExtensionUser(user, attributes);
+    // Seed core schema before populateExtensionUser so it can append extension URNs without overwriting
     List<String> schemas = new ArrayList<>();
     schemas.add(SCIM2_CORE_USER_SCHEMA);
     user.setSchemas(schemas);
+    populateExtensionUser(user, attributes);
   }
 
   protected Set<Attribute> populateCoreAttributes(Scim2User user) {
