@@ -6,6 +6,7 @@ import com.exclamationlabs.connid.base.connector.configuration.ConfigurationRead
 import com.exclamationlabs.connid.base.connector.test.ApiIntegrationTest;
 import com.exclamationlabs.connid.base.scim2.configuration.Scim2Configuration;
 import org.identityconnectors.framework.common.objects.*;
+import org.identityconnectors.framework.common.objects.filter.EqualsFilter;
 import org.identityconnectors.test.common.ToListResultsHandler;
 import org.junit.jupiter.api.*;
 
@@ -68,6 +69,17 @@ public class Scim2SGuardApiIntegrationTest
     List<ConnectorObject> users = handler.getObjects();
     assertNotNull(users);
     assertFalse(users.isEmpty(), "sGuard should return at least one user");
+  }
+
+  @Test
+  @Order(21)
+  public void test021GetUser() {
+    ToListResultsHandler handler = new ToListResultsHandler();
+    ConnectorObject ob = getConnectorFacade().getObject(
+            new ObjectClass("Scim2User"),
+            new Uid("1073905"),
+            new OperationOptionsBuilder().build());
+    assertNotNull(ob);
   }
 
   @Test

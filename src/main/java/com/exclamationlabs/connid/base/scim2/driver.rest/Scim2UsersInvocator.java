@@ -176,7 +176,15 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
         }
         else if (config.getEnableDynamicSchema())
         {
-            ;
+            RestRequest<Scim2User> req =
+                    new RestRequest.Builder<>(Scim2User.class)
+                            .withGet()
+                            .withRequestUri(driver.getConfiguration().getUsersEndpointUrl() + "/" + objectId)
+                            .build();
+            RestResponseData<Scim2User> response = driver.executeRequest(req);
+            if (response.getResponseStatusCode() == HttpStatus.SC_OK) {
+                user = response.getResponseObject();
+            }
         }
         return user;
     }
@@ -219,8 +227,19 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
         }
         else if (config.getEnableDynamicSchema())
         {
-            // Do the dynamic lookup here. The difference is the type
-            ;
+            String queryString = "?filter=userName%20eq%20%22" + name + "%22";
+            RestRequest<ListUsersResponse> req = new RestRequest.Builder<>(ListUsersResponse.class)
+                    .withGet()
+                    .withRequestUri(config.getUsersEndpointUrl() + queryString)
+                    .build();
+            RestResponseData<ListUsersResponse> response = driver.executeRequest(req);
+            if (response.getResponseStatusCode() == HttpStatus.SC_OK)
+            {
+                List<Scim2User> list = response.getResponseObject().getResources();
+                if (list != null && !list.isEmpty()) {
+                    user = list.get(0);
+                }
+            }
         }
         return user;
     }
