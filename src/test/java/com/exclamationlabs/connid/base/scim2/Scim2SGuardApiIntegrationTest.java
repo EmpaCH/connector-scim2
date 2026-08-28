@@ -10,7 +10,8 @@ import org.identityconnectors.framework.common.objects.filter.EqualsFilter;
 import org.identityconnectors.test.common.ToListResultsHandler;
 import org.junit.jupiter.api.*;
 
-import java.util.List;
+import java.util.*;
+
 
 /**
  * Integration tests for the sGuard SCIM2 endpoint.
@@ -80,6 +81,36 @@ public class Scim2SGuardApiIntegrationTest
             new Uid("1073905"),
             new OperationOptionsBuilder().build());
     assertNotNull(ob);
+  }
+
+  @Test
+  @Order(25)
+  public void test025UpdateUser() {
+    Set<AttributeDelta> delta = new HashSet<>();
+    delta.add(new AttributeDeltaBuilder()
+        .setName(OperationalAttributes.ENABLE_NAME)
+        .addValueToReplace(true)
+        .build());
+    delta.add(new AttributeDeltaBuilder()
+        .setName("phoneNumbers")
+        .addValueToReplace("{\"value\":\"+41442814141\",\"type\":\"work\",\"primary\":true}")
+        .build());
+    getConnectorFacade().updateDelta(
+        new ObjectClass("Scim2User"),
+        new Uid("1073905"),
+        delta,
+        new OperationOptionsBuilder().build());
+
+    ConnectorObject updated = getConnectorFacade().getObject(
+        new ObjectClass("Scim2User"),
+        new Uid("1073905"),
+        new OperationOptionsBuilder().build());
+    assertNotNull(updated, "User must still exist after update");
+    Attribute phoneAttr = updated.getAttributeByName("phoneNumbers");
+    assertNotNull(phoneAttr, "phoneNumbers attribute must be present after update");
+    assertTrue(
+        phoneAttr.getValue().stream().anyMatch(v -> v.toString().contains("+41442814141")),
+        "Updated phone number must be returned by GET");
   }
 
   @Test
