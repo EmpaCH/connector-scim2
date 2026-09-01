@@ -79,6 +79,10 @@ public class Scim2User implements IdentityModel {
    *  Key: schema URN; Value: map of flattened attribute paths to values. */
   private transient Map<String, Map<String, Object>> extensions = new LinkedHashMap<>();
 
+  /** Non-standard, non-extension core attributes from a dynamic schema (e.g. sGuard's {@code language}).
+   *  These are serialized as flat root-level JSON keys by {@link com.exclamationlabs.connid.base.scim2.adapter.dynamic.Scim2UserExtensionAdapterFactory}. */
+  private transient Map<String, Object> dynamicCoreAttributes = new LinkedHashMap<>();
+
   public Boolean getActive()
   {
     return active;
@@ -535,5 +539,13 @@ public class Scim2User implements IdentityModel {
 
   public void setExtensions(Map<String, Map<String, Object>> extensions) {
     this.extensions = extensions;
+  }
+
+  public Map<String, Object> getDynamicCoreAttributes() {
+    return dynamicCoreAttributes;
+  }
+
+  public void setDynamicCoreAttributes(Map<String, Object> dynamicCoreAttributes) {
+    this.dynamicCoreAttributes = dynamicCoreAttributes;
   }
 }

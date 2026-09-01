@@ -51,6 +51,14 @@ public class Scim2UserExtensionAdapterFactory implements TypeAdapterFactory {
                             }
                         }
                     }
+                    Map<String, Object> dynamicCore = user.getDynamicCoreAttributes();
+                    if (dynamicCore != null) {
+                        for (Map.Entry<String, Object> entry : dynamicCore.entrySet()) {
+                            if (entry.getValue() != null) {
+                                obj.add(entry.getKey(), gson.toJsonTree(entry.getValue()));
+                            }
+                        }
+                    }
                     jsonObjectAdapter.write(out, obj);
                 } else {
                     delegate.write(out, value);

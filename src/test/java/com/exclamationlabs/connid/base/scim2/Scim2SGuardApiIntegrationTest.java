@@ -1,6 +1,7 @@
 package com.exclamationlabs.connid.base.scim2;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.exclamationlabs.connid.base.connector.configuration.ConfigurationReader;
 import com.exclamationlabs.connid.base.connector.test.ApiIntegrationTest;
@@ -70,6 +71,67 @@ public class Scim2SGuardApiIntegrationTest
     List<ConnectorObject> users = handler.getObjects();
     assertNotNull(users);
     assertFalse(users.isEmpty(), "sGuard should return at least one user");
+  }
+
+  /**
+   * Regression test for the "Uid value must not be blank!" error that occurred when
+   * Scim2DynamicUserAdapter did not wire SCIM 'id' → __UID__ in the dynamic schema.
+   * After the fix the UID returned by create must be non-blank so MidPoint can store
+   * the shadow reference and subsequent updates can target the correct resource object.
+   */
+  private static String createdUid;
+
+  @Test
+  @Order(15)
+  public void test015CreateUserReturnsNonBlankUid() {
+    Set<Attribute> attrs = new HashSet<>();
+    attrs.add(new AttributeBuilder().setName(Name.NAME).addValue("mp-test-create@empa.ch").build());
+    attrs.add(new AttributeBuilder().setName("externalId").addValue("99999999").build());
+    // sGuard requires 'language'; without it the server returns 400 "[4] Anfrage-Parameter nicht gefunden"
+    attrs.add(new AttributeBuilder().setName("language").addValue("DE").build());
+    // sGuard requires name; sent as opaque JSON under 'scim_name' (renamed to avoid collision with __NAME__)
+    attrs.add(new AttributeBuilder().setName("scim_name")
+        .addValue("{\"familyName\":\"Test\",\"givenName\":\"MidPoint\"}").build());
+    attrs.add(new AttributeBuilder().setName("emails")
+        .addValue("{\"value\":\"mp-test-create@empa.ch\",\"type\":\"work\"}").build());
+    attrs.add(new AttributeBuilder().setName("phoneNumbers")
+        .addValue("{\"value\":\"\",\"type\":\"work\"}").build());
+
+    Uid uid = getConnectorFacade().create(
+        new ObjectClass("Scim2User"),
+        attrs,
+        new OperationOptionsBuilder().build());
+
+    assertNotNull(uid, "create() must return a Uid");
+    assertNotNull(uid.getUidValue(), "Uid value must not be null");
+    assertFalse(uid.getUidValue().isBlank(), "Uid value must not be blank");
+    createdUid = uid.getUidValue();
+  }
+
+  @Test
+  @Order(16)
+  public void test016CreatedUserIsRetrievable() {
+    assumeTrue(createdUid != null, "Skipped: create in test015 did not produce a UID");
+    ConnectorObject obj = getConnectorFacade().getObject(
+        new ObjectClass("Scim2User"),
+        new Uid(createdUid),
+        new OperationOptionsBuilder().build());
+    assertNotNull(obj, "Created user must be retrievable by its server-assigned UID");
+    Attribute name = obj.getAttributeByName(Name.NAME);
+    assertNotNull(name);
+    assertEquals("mp-test-create@empa.ch", name.getValue().get(0));
+  }
+
+  @Test
+  @Order(17)
+  public void test017DeleteCreatedUser() {
+    assumeTrue(createdUid != null, "Skipped: create in test015 did not produce a UID");
+    assertDoesNotThrow(() ->
+        getConnectorFacade().delete(
+            new ObjectClass("Scim2User"),
+            new Uid(createdUid),
+            new OperationOptionsBuilder().build()));
+    createdUid = null;
   }
 
   @Test

@@ -525,6 +525,13 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
    * Populates a Scim2User from ConnId attributes in dynamic schema mode.
    * Reads the flat "name" JSON blob (if present) and any extension URN attributes.
    */
+  private static final Set<String> KNOWN_DYNAMIC_ATTR_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
+      org.identityconnectors.framework.common.objects.Uid.NAME,
+      org.identityconnectors.framework.common.objects.Name.NAME,
+      org.identityconnectors.framework.common.objects.OperationalAttributes.ENABLE_NAME,
+      "active", "externalId", "scim_name", "emails", "phoneNumbers"
+  ));
+
   protected void populateDynamicUser(
       Scim2User user,
       Set<Attribute> attributes,
@@ -543,14 +550,36 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
         user.setName(new com.google.gson.Gson().fromJson(nameJson, Scim2Name.class));
       }
     }
+    // For updateDelta, multi-valued replace deltas land in addedMultiValueAttributes, not attributes
     Set<String> emailList = readAssignments(attributes, emails);
+    if ((emailList == null || emailList.isEmpty()) && addedMultiValueAttributes != null) {
+      emailList = readAssignments(addedMultiValueAttributes, emails);
+    }
     user.setEmails(getComplexTypes(emailList));
     Set<String> phoneList = readAssignments(attributes, phoneNumbers);
+    if ((phoneList == null || phoneList.isEmpty()) && addedMultiValueAttributes != null) {
+      phoneList = readAssignments(addedMultiValueAttributes, phoneNumbers);
+    }
     user.setPhoneNumbers(getComplexTypes(phoneList));
     // Seed core schema before populateExtensionUser so it can append extension URNs without overwriting
     List<String> schemas = new ArrayList<>();
     schemas.add(SCIM2_CORE_USER_SCHEMA);
     user.setSchemas(schemas);
+    // Collect non-standard core attributes (e.g. sGuard's "language") that are not handled above
+    // and are not URN-prefixed extension attributes — store them for flat root-level JSON serialization
+    Set<Attribute> allAttrs = new java.util.LinkedHashSet<>();
+    if (attributes != null) allAttrs.addAll(attributes);
+    if (addedMultiValueAttributes != null) allAttrs.addAll(addedMultiValueAttributes);
+    java.util.LinkedHashMap<String, Object> dynCore = new java.util.LinkedHashMap<>();
+    for (Attribute attr : allAttrs) {
+      String attrName = attr.getName();
+      if (KNOWN_DYNAMIC_ATTR_NAMES.contains(attrName)) continue;
+      if (attrName.startsWith("urn_")) continue; // handled by populateExtensionUser
+      if (attr.getValue() == null || attr.getValue().isEmpty()) continue;
+      Object val = attr.getValue().size() == 1 ? attr.getValue().get(0) : attr.getValue();
+      dynCore.put(attrName, val);
+    }
+    if (!dynCore.isEmpty()) user.setDynamicCoreAttributes(dynCore);
     populateExtensionUser(user, attributes);
   }
 
