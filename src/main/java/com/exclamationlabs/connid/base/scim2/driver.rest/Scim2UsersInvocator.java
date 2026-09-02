@@ -398,15 +398,74 @@ public class Scim2UsersInvocator implements DriverInvocator<Scim2Driver, Scim2Us
         }
         else if (config.getEnableDynamicSchema())
         {
-            user.setId(userId);
+            // GET current state so we can do a proper full-replace PUT that preserves
+            // fields not mentioned in the delta and correctly merges ADD/REMOVE list operations.
+            Scim2User current = getOne(driver, userId, null);
+            if (current == null) current = new Scim2User();
+
+            // Scalar overrides: apply non-null incoming values over the current state
+            if (user.getExternalId() != null) current.setExternalId(user.getExternalId());
+            if (user.getUserName() != null)   current.setUserName(user.getUserName());
+            if (user.getActive()   != null)   current.setActive(user.getActive());
+            if (user.getName()     != null)   current.setName(user.getName());
+
+            // Dynamic core attributes (e.g. language): merge into current
+            if (user.getDynamicCoreAttributes() != null && !user.getDynamicCoreAttributes().isEmpty()) {
+                if (current.getDynamicCoreAttributes() == null)
+                    current.setDynamicCoreAttributes(new java.util.LinkedHashMap<>());
+                current.getDynamicCoreAttributes().putAll(user.getDynamicCoreAttributes());
+            }
+
+            // REPLACE list fields: incoming user.emails/phoneNumbers is non-null only for REPLACE deltas
+            if (user.getEmails()       != null) current.setEmails(user.getEmails());
+            if (user.getPhoneNumbers() != null) current.setPhoneNumbers(user.getPhoneNumbers());
+
+            // ADD list fields: append incoming entries to existing list
+            applyComplexListChanges(current.getEmails(),       user.getEmailsAdded(),       user.getEmailsRemoved(),       current::setEmails);
+            applyComplexListChanges(current.getPhoneNumbers(), user.getPhoneNumbersAdded(),  user.getPhoneNumbersRemoved(), current::setPhoneNumbers);
+
+            current.setId(userId);
+            // Carry over schemas from incoming user if present
+            if (user.getSchemas() != null && !user.getSchemas().isEmpty()) current.setSchemas(user.getSchemas());
+
             RestRequest<Scim2User> req = new RestRequest.Builder<>(Scim2User.class)
                     .withPut()
                     .withContentTypeHeader("application/scim+json")
                     .withRequestUri(config.getUsersEndpointUrl() + "/" + userId)
-                    .withRequestBody(user)
+                    .withRequestBody(current)
                     .build();
             driver.executeRequest(req);
         }
+    }
+
+    /**
+     * Merges ADD and REMOVE list-delta entries into an existing complex-type list for a full PUT.
+     * ADD entries are appended; REMOVE entries are matched by "value" field and removed.
+     */
+    private void applyComplexListChanges(
+            List<com.exclamationlabs.connid.base.scim2.model.Scim2ComplexType> current,
+            List<Map<String, String>> toAdd,
+            List<Map<String, String>> toRemove,
+            java.util.function.Consumer<List<com.exclamationlabs.connid.base.scim2.model.Scim2ComplexType>> setter) {
+        if ((toAdd == null || toAdd.isEmpty()) && (toRemove == null || toRemove.isEmpty())) return;
+        List<com.exclamationlabs.connid.base.scim2.model.Scim2ComplexType> merged =
+                current != null ? new java.util.ArrayList<>(current) : new java.util.ArrayList<>();
+        if (toRemove != null) {
+            for (Map<String, String> rem : toRemove) {
+                String val = rem.get("value");
+                if (val != null) merged.removeIf(ct -> val.equals(ct.getValue()));
+            }
+        }
+        if (toAdd != null) {
+            for (Map<String, String> add : toAdd) {
+                com.exclamationlabs.connid.base.scim2.model.Scim2ComplexType ct =
+                        new com.exclamationlabs.connid.base.scim2.model.Scim2ComplexType();
+                ct.setValue(add.get("value"));
+                ct.setType(add.get("type"));
+                merged.add(ct);
+            }
+        }
+        setter.accept(merged);
     }
 
     public void updateMultiValued(Scim2Driver driver, String userId, Scim2User user)

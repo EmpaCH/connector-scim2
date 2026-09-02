@@ -24,6 +24,17 @@ public class Scim2UserExtensionAdapterFactory implements TypeAdapterFactory {
     private static final String ENTERPRISE_URN =
             "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User";
 
+    // Standard SCIM2 User field names that Gson deserializes directly into Scim2User fields
+    private static final java.util.Set<String> KNOWN_SCIM2_USER_FIELDS = new java.util.HashSet<>(
+            java.util.Arrays.asList(
+                    "active", "addresses", "displayName", "emails",
+                    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User",
+                    "entitlements", "externalId", "groups", "id", "ims", "locale",
+                    "meta", "name", "nickName", "password", "phoneNumbers", "photos",
+                    "preferredLanguage", "profileUrl", "roles", "schemas", "timezone",
+                    "title", "userName", "userType", "x509Certificates"
+            ));
+
     @Override
     @SuppressWarnings("unchecked")
     public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
@@ -71,20 +82,26 @@ public class Scim2UserExtensionAdapterFactory implements TypeAdapterFactory {
                 T result = delegate.fromJsonTree(jsonObject);
                 Scim2User user = (Scim2User) result;
                 Map<String, Map<String, Object>> extensions = new LinkedHashMap<>();
+                Map<String, Object> dynamicCore = new LinkedHashMap<>();
                 for (Map.Entry<String, JsonElement> entry : jsonObject.entrySet()) {
                     String key = entry.getKey();
-                    if (!key.startsWith("urn:") || !entry.getValue().isJsonObject()) continue;
-                    if (key.equals(ENTERPRISE_URN)) {
-                        // Enterprise extension is handled by the field-level adapter, but may
-                        // contain nested extension URNs (e.g. Entra) as sibling keys.
-                        extractNestedExtensions(entry.getValue().getAsJsonObject(), extensions);
-                    } else {
-                        Map<String, Object> extFields = new LinkedHashMap<>();
-                        flattenJsonObject("", entry.getValue().getAsJsonObject(), extFields);
-                        extensions.put(key, extFields);
+                    if (key.startsWith("urn:")) {
+                        if (!entry.getValue().isJsonObject()) continue;
+                        if (key.equals(ENTERPRISE_URN)) {
+                            extractNestedExtensions(entry.getValue().getAsJsonObject(), extensions);
+                        } else {
+                            Map<String, Object> extFields = new LinkedHashMap<>();
+                            flattenJsonObject("", entry.getValue().getAsJsonObject(), extFields);
+                            extensions.put(key, extFields);
+                        }
+                    } else if (!KNOWN_SCIM2_USER_FIELDS.contains(key)) {
+                        // Non-standard core attribute (e.g. sGuard's "language") — capture for shadow
+                        Object val = toPrimitive(entry.getValue());
+                        if (val != null) dynamicCore.put(key, val);
                     }
                 }
                 user.setExtensions(extensions);
+                if (!dynamicCore.isEmpty()) user.setDynamicCoreAttributes(dynamicCore);
                 return result;
             }
 

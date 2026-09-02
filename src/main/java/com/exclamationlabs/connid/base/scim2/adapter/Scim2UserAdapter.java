@@ -240,6 +240,26 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
    * @param complexTypes Collection of complex types to be converted
    * @return Set of String
    */
+  /**
+   * Converts a set of JSON strings (each representing a complex type like phoneNumbers) to the
+   * {@code List<Map<String,String>>} format used by the transient Added/Removed fields on Scim2User,
+   * so that the invocator can apply ADD/REMOVE deltas against the current server state before PUT.
+   */
+  @SuppressWarnings("unchecked")
+  protected List<Map<String, String>> jsonStringsToMapList(Set<String> jsonStrings) {
+    List<Map<String, String>> result = new ArrayList<>();
+    if (jsonStrings == null) return result;
+    Gson gson = new Gson();
+    for (String json : jsonStrings) {
+      if (json == null || json.isEmpty()) continue;
+      try {
+        Map<String, String> map = gson.fromJson(json, Map.class);
+        if (map != null) result.add(map);
+      } catch (Exception ignored) {}
+    }
+    return result;
+  }
+
   public Set<String> putComplexTypes(Collection<Scim2ComplexType> complexTypes) {
     Set<String> result = new HashSet<>();
     if ( complexTypes == null || complexTypes.isEmpty() ) {
@@ -518,6 +538,14 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
     Set<String> phoneSet = putComplexTypes(user.getPhoneNumbers());
     if (phoneSet != null) attrs.add(AttributeBuilder.build(phoneNumbers.name(), phoneSet));
     attrs.addAll(populateExtensionAttributes(user));
+    // Emit non-standard core attributes captured by the deserializer (e.g. sGuard "language")
+    if (user.getDynamicCoreAttributes() != null) {
+      for (java.util.Map.Entry<String, Object> entry : user.getDynamicCoreAttributes().entrySet()) {
+        if (entry.getValue() != null) {
+          attrs.add(AttributeBuilder.build(entry.getKey(), entry.getValue().toString()));
+        }
+      }
+    }
     return attrs;
   }
 
@@ -550,17 +578,25 @@ public class Scim2UserAdapter extends BaseAdapter<Scim2User, Scim2Configuration>
         user.setName(new com.google.gson.Gson().fromJson(nameJson, Scim2Name.class));
       }
     }
-    // For updateDelta, multi-valued replace deltas land in addedMultiValueAttributes, not attributes
-    Set<String> emailList = readAssignments(attributes, emails);
-    if ((emailList == null || emailList.isEmpty()) && addedMultiValueAttributes != null) {
-      emailList = readAssignments(addedMultiValueAttributes, emails);
+    // REPLACE deltas (attributes): set the main list — the invocator will use this as a full replacement
+    Set<String> emailReplace = readAssignments(attributes, emails);
+    if (emailReplace != null && !emailReplace.isEmpty()) user.setEmails(getComplexTypes(emailReplace));
+    Set<String> phoneReplace = readAssignments(attributes, phoneNumbers);
+    if (phoneReplace != null && !phoneReplace.isEmpty()) user.setPhoneNumbers(getComplexTypes(phoneReplace));
+    // ADD/REMOVE deltas (addedMultiValueAttributes / removedMultiValueAttributes):
+    // stored in transient Added/Removed lists so the invocator can merge them with the current server state
+    if (addedMultiValueAttributes != null) {
+      Set<String> emailAdd = readAssignments(addedMultiValueAttributes, emails);
+      if (emailAdd != null && !emailAdd.isEmpty()) user.setEmailsAdded(jsonStringsToMapList(emailAdd));
+      Set<String> phoneAdd = readAssignments(addedMultiValueAttributes, phoneNumbers);
+      if (phoneAdd != null && !phoneAdd.isEmpty()) user.setPhoneNumbersAdded(jsonStringsToMapList(phoneAdd));
     }
-    user.setEmails(getComplexTypes(emailList));
-    Set<String> phoneList = readAssignments(attributes, phoneNumbers);
-    if ((phoneList == null || phoneList.isEmpty()) && addedMultiValueAttributes != null) {
-      phoneList = readAssignments(addedMultiValueAttributes, phoneNumbers);
+    if (removedMultiValueAttributes != null) {
+      Set<String> emailRemove = readAssignments(removedMultiValueAttributes, emails);
+      if (emailRemove != null && !emailRemove.isEmpty()) user.setEmailsRemoved(jsonStringsToMapList(emailRemove));
+      Set<String> phoneRemove = readAssignments(removedMultiValueAttributes, phoneNumbers);
+      if (phoneRemove != null && !phoneRemove.isEmpty()) user.setPhoneNumbersRemoved(jsonStringsToMapList(phoneRemove));
     }
-    user.setPhoneNumbers(getComplexTypes(phoneList));
     // Seed core schema before populateExtensionUser so it can append extension URNs without overwriting
     List<String> schemas = new ArrayList<>();
     schemas.add(SCIM2_CORE_USER_SCHEMA);
